@@ -70,6 +70,7 @@ Put your vacuum somewhere in your home but not docked
 This will trigger the map building and image will be rebuilded every 2 seconds.
 
 You can now adjust setting by changing in HA the input_numbers defined previously.
+
 vacuum_mapbuilder_dock_x & vacuum_mapbuilder_dock_x: define the position of the vacuum when docked on your background image (in pixel)
 vacuum_mapbuilder_ratio : define the ration to upscale / downscale the vacuum image.
 

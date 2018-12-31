@@ -38,6 +38,7 @@ class MapBuilder(hass.Hass):
             latest_ppm_file = max(list_ppm_file, key=os.path.getctime)
         except:
             self.run_in(self.main_loop, 2)
+            return
 
 
         '''
