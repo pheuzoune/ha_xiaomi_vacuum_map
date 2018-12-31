@@ -1,0 +1,6 @@
+XiaomiVacuumCleaner_MapBuilder:
+   module: XiaomiVacuumCleaner
+   class: MapBuilder
+   xiaomi_vacuum_host: !secret xiaomi_vacuum_host
+   xiaomi_vacuum_map_generated: !secret xiaomi_vacuum_map_generated
+   xiaomi_vacuum_map_base: !secret xiaomi_vacuum_map_base

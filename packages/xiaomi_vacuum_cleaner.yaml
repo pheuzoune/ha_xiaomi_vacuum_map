@@ -1,0 +1,28 @@
+vacuum:
+  - platform: xiaomi_miio
+    host: !secret xiaomi_vacuum_host
+    token: !secret xiaomi_vacuum_token
+
+
+input_number:
+  vacuum_mapbuilder_ratio:
+    min: 0
+    max: 100
+    mode: box
+    step: 0.001
+  vacuum_mapbuilder_dock_x:
+    min: 0
+    max: 9999
+    mode: box
+  vacuum_mapbuilder_dock_y:
+    min: 0
+    max: 9999
+    mode: box
+
+
+camera:
+  - platform: generic
+    name: vacuum_map
+    still_image_url: https://127.0.0.1:8123/local/vacuum_map.png
+    verify_ssl: false
+    framerate: 1
