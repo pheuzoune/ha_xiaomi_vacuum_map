@@ -7,7 +7,7 @@ import shutil
 from PIL import Image, ImageDraw, ImageChops
 
 class MapBuilder(hass.Hass):
-    print_debug = True
+    print_debug = False
     started = False
     vacuum_host = None
     loop_handle = None
@@ -29,14 +29,27 @@ class MapBuilder(hass.Hass):
             self.main_loop()
 
     def main_loop(self, kwargs=None):
-        self.debug('iteration')
-        self.rsync_files()
         self.started = True
+        self.debug('iteration')
+        #If vacuum is docked, stopping loop
+        if self.get_state('vacuum.xiaomi_vacuum_cleaner') == 'docked':
+            self.end_loop()
+            return
 
+        #Syncing files
+        self.rsync_files()
+
+        #looking for latests modified navmap ppm
         list_ppm_file = glob.glob(self.working_directory+'/navmap*.ppm')
         try:
             latest_ppm_file = max(list_ppm_file, key=os.path.getctime)
         except:
+            if self.get_state('vacuum.xiaomi_vacuum_cleaner') != 'docked':
+                self.run_in(self.main_loop, 2)
+            return
+
+        #Checking that we have a SLAM log file
+        if not os.path.exists(self.working_directory+'/SLAM_fprintf.log'):
             self.run_in(self.main_loop, 2)
             return
 
@@ -54,10 +67,13 @@ class MapBuilder(hass.Hass):
         else:
             slam_files_size = len(self.slam_files)
             with open(self.working_directory+'/'+self.slam_files[slam_files_size - 1]) as last_slam_data:
+                self.debug(self.working_directory+'/'+self.slam_files[slam_files_size - 1])
                 last_slam_first_line = last_slam_data.readline()
             with open(self.working_directory+'/SLAM_fprintf.log') as current_slam_data:
                 current_slam_first_line = current_slam_data.readline()
             if last_slam_first_line != current_slam_first_line:
+                self.debug('SLAM_File last First line : '+ last_slam_first_line)
+                self.debug('SLAM_File current First line : '+ current_slam_first_line)
                 self.slam_files.append(str(slam_files_size)+'_SLAM_fprintf.log')
 
             last_slam_file_position = len(self.slam_files) - 1
@@ -75,14 +91,13 @@ class MapBuilder(hass.Hass):
             self.debug('Error in map generation')
 
         '''
-        Run the main loop again while vacuum is not docked
+        Run the main loop again in 2 seconds
         '''
-        if self.get_state('vacuum.xiaomi_vacuum_cleaner') != 'docked':
-            self.run_in(self.main_loop, 2)
-        else:
-            self.end_loop()
+        self.run_in(self.main_loop, 2)
+
 
     def end_loop(self):
+        #switching to off and cleaning up
         self.started = False
         self.slam_files = []
         shutil.rmtree(self.working_directory)
