@@ -4,6 +4,7 @@ import os
 import io
 import glob
 import shutil
+import math
 from PIL import Image, ImageDraw, ImageChops
 
 class MapBuilder(hass.Hass):
@@ -19,6 +20,9 @@ class MapBuilder(hass.Hass):
         self.vacuum_host = self.args["xiaomi_vacuum_host"]
         self.vacuum_map_generated = self.args["xiaomi_vacuum_map_generated"]
         self.vacuum_map_base = self.args["xiaomi_vacuum_map_base"]
+        if self.get_state('vacuum.xiaomi_vacuum_cleaner') != 'docked':
+            self.run_in(self.main_loop, 0)
+            time.sleep(1)
         self.listen_state(self.state_changed, "vacuum.xiaomi_vacuum_cleaner")
 
 
@@ -39,17 +43,21 @@ class MapBuilder(hass.Hass):
         #Syncing files
         self.rsync_files()
 
-        #looking for latests modified navmap ppm
-        list_ppm_file = glob.glob(self.working_directory+'/navmap*.ppm')
+
         try:
+            #looking for latests modified navmap ppm
+            list_ppm_file = glob.glob(self.working_directory+'/navmap*.ppm')
             latest_ppm_file = max(list_ppm_file, key=os.path.getctime)
+            self.debug('finished linsting ppm')
         except:
+            self.debug('error getting last ppm file')
             if self.get_state('vacuum.xiaomi_vacuum_cleaner') != 'docked':
                 self.run_in(self.main_loop, 2)
             return
 
         #Checking that we have a SLAM log file
         if not os.path.exists(self.working_directory+'/SLAM_fprintf.log'):
+            self.debug('slam file missing')
             self.run_in(self.main_loop, 2)
             return
 
@@ -62,8 +70,14 @@ class MapBuilder(hass.Hass):
         '''
         if len(self.slam_files) == 0:
             #No slam files initiated
+            self.debug('no array of slamfile initialised')
             shutil.copy(self.working_directory+'/SLAM_fprintf.log', self.working_directory+'/0_SLAM_fprintf.log')
+            if not os.path.exists(self.working_directory+'/0_SLAM_fprintf.log'):
+                self.debug('was not able to copy SLAM_fprintf correctly')
+                self.run_in(self.main_loop, 2)
+                return
             self.slam_files.append('0_SLAM_fprintf.log')
+            self.debug('pushing the file a index 0')
         else:
             slam_files_size = len(self.slam_files)
             with open(self.working_directory+'/'+self.slam_files[slam_files_size - 1]) as last_slam_data:
@@ -81,14 +95,18 @@ class MapBuilder(hass.Hass):
             shutil.copy(self.working_directory+'/SLAM_fprintf.log', self.working_directory+'/' + str(last_slam_file_position) +'_SLAM_fprintf.log')
 
         if os.path.exists(self.working_directory+'/slam_concatenated.log'):
+            self.debug('removing previous concat file')
             os.remove(self.working_directory+'/slam_concatenated.log')
         for slam_file in self.slam_files:
-            os.system('cat '+ self.working_directory + '/' + slam_file + ' >> ' + self.working_directory + '/slam_concatenated.log')
+            concat_command = 'cat '+ self.working_directory + '/' + slam_file + ' >> ' + self.working_directory + '/slam_concatenated.log'
+            self.debug(concat_command)
+            os.system(concat_command)
         slam_file = self.working_directory+'/slam_concatenated.log'
         try:
             self.build_map(slam_file, latest_ppm_file, self.vacuum_map_base, self.vacuum_map_generated)
-        except:
+        except Exception as e:
             self.debug('Error in map generation')
+            self.debug(str(e))
 
         '''
         Run the main loop again in 2 seconds
@@ -117,6 +135,7 @@ class MapBuilder(hass.Hass):
         sync_files_cmd += self.working_directory+ '/ '
         self.debug(sync_files_cmd)
         os.system(sync_files_cmd)
+        self.debug('rsync done')
 
 
 
@@ -143,11 +162,13 @@ class MapBuilder(hass.Hass):
         nothing to modify after that
         """
 
+        self.debug('Vacuum Image File : '+vacuum_file)
         vacuum_image = Image.open(io.BytesIO(open(vacuum_file, 'rb').read()))
         vacuum_image = vacuum_image.convert('RGBA')
 
         background_image = Image.open(io.BytesIO(open(backgroung_file,'rb').read()))
         background_image = background_image.convert('RGBA')
+
 
         slam_log_data = open(slam_file).read()
 
@@ -159,33 +180,39 @@ class MapBuilder(hass.Hass):
         #Colors needed to modify vacuum_map
         white = (255,255,255,255)
         grey = (125, 125, 125, 255)  # background color
-        transparent = (0, 0, 0, 0)
+        transparent = (255, 255, 255, 0)
+        pink = (255 ,0, 255, 255)
+        blue = (0 ,0 ,255, 255)
 
 
         # calculate center of the image
         center_x = vacuum_image.size[0] / 2
         center_y = vacuum_image.size[1] / 2
 
+        self.debug('center calculated')
+
         # crop image to remove extra space
+        self.debug('# crop image to remove extra space')
         bgcolor_image = Image.new('RGBA', vacuum_image.size, grey)
-        cropbox = ImageChops.subtract(vacuum_image, bgcolor_image).getbbox()
+        cropbox = ImageChops.subtract(vacuum_image, bgcolor_image).convert('RGB').getbbox()
         vacuum_image = vacuum_image.crop(cropbox)
 
-        # Replace grey and white background with transparent pixels
+        self.debug('# Replace grey and white background with transparent pixels')
+        # Replace grey and white, pink and blue pixels
         pixdata = vacuum_image.load()
         for y in range(vacuum_image.size[1]):
             for x in range(vacuum_image.size[0]):
-                if pixdata[x, y] == grey or pixdata[x, y] == white:
+                if pixdata[x, y] == grey or pixdata[x, y] == white or pixdata[x, y] == blue or pixdata[x, y] == pink:
                     pixdata[x, y] = transparent
 
 
-        # resize based on ratio to match the background image
+        self.debug('# resize based on ratio to match the background image')
         vacuum_image_new_width = int(vacuum_image.size[0] * ratio)
         vacuum_image_new_heigh = int(vacuum_image.size[1] * ratio)
         vacuum_image = vacuum_image.resize((vacuum_image_new_width,vacuum_image_new_heigh), Image.NEAREST)
 
 
-        # Parameters to upscale Image
+        self.debug('# Parameters to upscale Image')
         # 20 is the factor to fit coordinates in the standard map, multiplied by ratio
         # to match the background image
         slam_position_factor = 20 * ratio
@@ -197,7 +224,7 @@ class MapBuilder(hass.Hass):
         center_y = int((center_y - cropbox[1]) * ratio)
 
 
-        # prepare for drawing
+        self.debug('# prepare for drawing')
         draw = ImageDraw.Draw(vacuum_image)
 
         # loop each line of slam log to draw vacuum surface
@@ -223,19 +250,34 @@ class MapBuilder(hass.Hass):
                             draw.line([prev_pos, pos], vacuum_path_color,3)
                     prev_pos = pos
 
-        # draw current position
+        self.debug('# draw current position')
         draw.ellipse(ellipsebb(x, y), vacuum_position_color)
 
         # crop image
-        bgcolor_image = Image.new('RGBA', vacuum_image.size, grey)
-        cropbox = ImageChops.subtract(vacuum_image, bgcolor_image).getbbox()
+        #bgcolor_image = Image.new('RGBA', vacuum_image.size, grey)
+        #cropbox = ImageChops.subtract(vacuum_image, bgcolor_image).getbbox()
 
-        offset_x = -int((vacuum_image.size[0] / 2 - vacuum_x))
-        offset_y = -int((vacuum_image.size[1] / 2 - vacuum_y))
-        offset_x = vacuum_x - center_x
-        offset_y = vacuum_y - center_y
+#       offset_x = vacuum_x - center_x
+#       offset_y = vacuum_y - center_y
 
-        vacuum_image = vacuum_image.rotate(rotation)
+
+        #Rotate image arround base position before merging, with expanding container of the image.
+        vacuum_image = vacuum_image.rotate(rotation, expand=1)
+        #rotate position of the vacuum charger
+        radians = math.radians(rotation)
+        center_x_rotated = math.cos(radians) * center_x - math.sin(radians) * center_y
+        center_y_rotated = math.sin(radians) * center_x + math.cos(radians) * center_y
+        if center_x_rotated < 0:
+            center_x_rotated = vacuum_image.size[0] + center_x_rotated
+        if center_y_rotated < 0:
+            center_y_rotated = vacuum_image.size[1] + center_y_rotated
+
+
+
+
+        offset_x = int(vacuum_x - center_x_rotated)
+        offset_y = int(vacuum_y - center_y_rotated)
+
 
         background_image.paste(vacuum_image, (offset_x,offset_y), vacuum_image)
 
@@ -251,4 +293,4 @@ class MapBuilder(hass.Hass):
 
     def debug(self, message):
         if self.print_debug:
-            print('XiaomiVacuumCleaner/MapBuilder: ' + message)
+            print('XiaomiVacuumCleaner/MapBuilder: ' + repr(message))
